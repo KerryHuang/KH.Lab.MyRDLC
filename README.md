@@ -24,13 +24,10 @@ cd RdlcReportApp
 安裝以下 NuGet 套件以支持 RDLC 報表：
 
 使用`ReportViewerCore.NETCore`
-
 ```
 dotnet add package ReportViewerCore.NETCore
 ```
-
 使用`AspNetCore.Reporting`
-
 ```
 dotnet add package AspNetCore.Reporting
 dotnet add package System.Drawing.Common
@@ -222,3 +219,217 @@ app.Run();
 ### 總結
 
 這個教學展示了如何在 .NET 8 中設置和使用 RDLC 報表，包括創建專案、設置資料源、生成報表和配置路由。根據您的需求，您可以進一步自訂報表內容和資料源。
+
+### ★擴充教學
+
+配送單樣式報表
+
+1. 建立資料集
+2. 建立RDLC報表
+3. BarCode 與 QRCode 圖片處理
+4. 程式碼
+
+使用`ReportViewerCore.NETCore`
+
+```csharp
+        public IActionResult List2()
+        {
+            // 載入報表
+            var report = new LocalReport();
+            // 取得報表路徑
+            var assembly = typeof(Reports.Const).Assembly;
+            using var rs = assembly.GetManifestResourceStream("KH.Lab.MyRDLC.Reports.RDLCs.Report3.rdlc");
+            report.LoadReportDefinition(rs);
+            // 取得報表資料
+            var items = _northwindcontext.Orders.ToList();
+            var ds = new DeliveryDataSet();
+            foreach (var item in items)
+            {
+                DataRow dr = ds.Tables["DeliveryOrder"].NewRow();
+                string barcode = DateTime.Now.ToString("yyyyMMddHHmmssfff");
+                dr["DeliveryNumber"] = barcode;
+                dr["ShipName"] = item.ShipName;
+                dr["ShipAddress"] = item.ShipAddress;
+                dr["BarCode"] = BarcodeHelper.CreateBarCodeBytes(barcode, 300, 100);
+                dr["QRCode"] = BarcodeHelper.CreateQRCodeBytes(barcode, 200, 200);
+                ds.Tables["DeliveryOrder"].Rows.Add(dr);
+            }
+            // 設定報表資料來源
+            report.DataSources.Add(new ReportDataSource("DeliveryOrder", ds.Tables["DeliveryOrder"]));
+            // 生成報表
+            var result = report.Render("PDF");
+            // 回傳檔案
+            return File(result, MediaTypeNames.Application.Pdf, "配送單2.pdf");
+        }
+```
+
+使用`AspNetCore.Reporting`
+
+```csharp
+        public IActionResult List2()
+        {
+            // 取得報表路徑
+            var reportPath = Path.Combine(AppContext.BaseDirectory, "RDLCs", "Report3.rdlc");
+            // 載入報表
+            var report = new LocalReport(reportPath);
+            // 取得報表資料
+            var items = _northwindcontext.Orders.ToList();
+            var ds = new DeliveryDataSet();
+            foreach (var item in items)
+            {
+                DataRow dr = ds.Tables["DeliveryOrder"].NewRow();
+                string barcode = DateTime.Now.ToString("yyyyMMddHHmmssfff");
+                dr["DeliveryNumber"] = barcode;
+                dr["ShipName"] = item.ShipName;
+                dr["ShipAddress"] = item.ShipAddress;
+                dr["BarCode"] = BarcodeHelper.CreateBarCodeBytes(barcode, 300, 100);
+                dr["QRCode"] = BarcodeHelper.CreateQRCodeBytes(barcode, 200, 200);
+                ds.Tables["DeliveryOrder"].Rows.Add(dr);
+            }
+            // 設定報表資料來源
+            report.AddDataSource("DeliveryOrder", ds.Tables["DeliveryOrder"]);
+            // 生成報表
+            var result = report.Execute(RenderType.Pdf);
+            // 回傳檔案
+            return File(result.MainStream, MediaTypeNames.Application.Pdf, "配送單2.pdf");
+        }
+```
+
+### ★擴充類別
+
+1. 資料表處理
+
+建立靜態類別與方法
+
+```csharp
+public static class DataTableHelper
+{
+    public static DataTable ToDataTable<T>(this List<T> items)
+    {
+        var dataTable = new DataTable(typeof(T).Name);
+        //Get all the properties
+        PropertyInfo[] Props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        foreach (PropertyInfo prop in Props)
+        {
+            Type type = Nullable.GetUnderlyingType(prop.PropertyType) ?? prop.PropertyType;
+            type = type.IsEnum ? Enum.GetUnderlyingType(type) : type;
+            //Setting column names as Property names
+            dataTable.Columns.Add(prop.Name, type);
+        }
+        foreach (T item in items)
+        {
+            var values = new object[Props.Length];
+            for (int i = 0; i < Props.Length; i++)
+            {
+                //inserting property values to datatable rows
+                values[i] = Props[i].GetValue(item, null) ?? DBNull.Value;
+            }
+            dataTable.Rows.Add(values);
+        }
+        //put a breakpoint here and check datatable
+        return dataTable;
+    }
+}
+```
+
+2.  QR Code 一維碼、二維碼
+
+新增Nuget套件
+
+```
+dotnet add package ZXing.Net
+dotnet add package ZXing.Net.Bindings.ZKWeb.System.Drawing
+dotnet add package System.Drawing.Common
+```
+
+建立靜態類別與方法
+
+```csharp
+public static class BarcodeHelper
+{
+    /// <summary>
+    ///  產生一維碼
+    /// </summary>
+    /// <param name="content">內容</param>
+    /// <param name="width">寬度</param>
+    /// <param name="height">高度</param>
+    /// <param name="purebarcode">內容不放在BarCode下</param>
+    public static byte[] CreateBarCodeBytes(string content, int width = 300, int height = 100, bool purebarcode = true)
+    {
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        var writer = new BarcodeWriter
+        {
+            // 要產生的Code類型
+            Format = BarcodeFormat.CODE_128,
+            // 產生圖形的屬性
+            Options = new EncodingOptions()
+            {
+                Margin = 0,
+                Height = height,
+                Width = width,
+                PureBarcode = purebarcode
+            }
+        };
+        var b2 = writer.Write(content);
+        return BitmapToArray(b2);
+    }
+
+    /// <summary>
+    /// 產生二維碼
+    /// </summary>
+    /// <param name="content">內容</param>
+    /// <param name="width">寬度</param>
+    /// <param name="height">高度</param>
+    /// <returns></returns>
+    public static byte[] CreateQRCodeBytes(string content, int width = 250, int height = 250)
+    {
+        int heig = width;
+        if (width > height)
+        {
+            heig = height;
+            width = height;
+        }
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            return null;
+        }
+
+        var writer = new BarcodeWriter
+        {
+            //要產生的Code類型
+            Format = BarcodeFormat.QR_CODE,
+            //產生圖形的屬性
+            Options = new QrCodeEncodingOptions()
+            {
+                Margin = 0,
+                Height = heig,   //圖形的高
+                Width = width,    //圖形的寬
+                CharacterSet = "UTF-8",  //編碼格式 UTF-8  中文才不會出現亂
+                ErrorCorrection = ZXing.QrCode.Internal.ErrorCorrectionLevel.M  //錯誤修正內容
+            }
+        };
+        var bm = writer.Write(content);
+        return BitmapToArray(bm);
+    }
+
+    /// <summary>
+    /// 將 Bitmap 轉換為 byte[] 的方法
+    /// </summary>
+    /// <param name="bmp">The BMP.</param>
+    /// <returns></returns>
+    public static byte[] BitmapToArray(Bitmap bmp)
+    {
+        byte[] byteArray = null;
+        using (var stream = new MemoryStream())
+        {
+            bmp.Save(stream, ImageFormat.Jpeg);
+            byteArray = stream.GetBuffer();
+        }
+        return byteArray;
+    }
+}
+```

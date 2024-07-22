@@ -1,7 +1,7 @@
 ﻿using System.Data;
 using System.Reflection;
 
-namespace KH.Lab.MyRDLC.Web.Helpers;
+namespace KH.Lab.MyRDLC.Reports.Helpers;
 
 public static class DataTableHelper
 {
